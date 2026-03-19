@@ -26,7 +26,9 @@ def test_mutations_rejected(readonly_engine):
     ]
     for op_name, sql in mutations:
         with readonly_engine.connect() as conn:
-            with pytest.raises(ProgrammingError, match="permission denied"):
+            # INSERT/UPDATE raise "permission denied for table X"
+            # DROP raises "must be owner of table X" — both signal rejection
+            with pytest.raises(ProgrammingError, match="permission denied|must be owner"):
                 conn.execute(text(sql))
                 conn.commit()
 
