@@ -100,3 +100,30 @@ def wait_for_db(engine: Engine, retries: int = 10, delay: float = 2.0) -> None:
         f"Database not available after {retries} retries. "
         "Ensure `docker compose up --wait` has been run."
     )
+
+
+# ── Inventory DB (SQLite) ─────────────────────────────────────────────────────
+
+# Absolute path derived from this file's location to avoid CWD-relative ambiguity.
+# connections.py lives at: multi-db-sql-agent/src/db/connections.py
+# inventory.db lives at:   multi-db-sql-agent/db/inventory.db
+_AGENT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_DEFAULT_INVENTORY_URL = f"sqlite:///{os.path.join(_AGENT_ROOT, 'db', 'inventory.db')}"
+
+
+def get_inventory_engine() -> Engine:
+    """Return a SQLAlchemy Engine connected to inventory_db (SQLite).
+
+    No readonly/admin split — SQLite uses file-level access control.
+    The DB file is created automatically by SQLite on first connection.
+
+    Environment variables (loaded from .env):
+        INVENTORY_DB_URL — sqlite:///./db/inventory.db
+                           (defaults to absolute path relative to this file)
+    """
+    url = os.getenv("INVENTORY_DB_URL", _DEFAULT_INVENTORY_URL)
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        echo=False,
+    )
