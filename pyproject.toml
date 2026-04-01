@@ -16,6 +16,9 @@ dependencies = [
     "langgraph>=0.2",
     # SQL validation
     "sqlglot>=25.0",
+    # API
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
     # Seed scripts
     "faker>=30.0",
 ]

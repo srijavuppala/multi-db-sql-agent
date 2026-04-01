@@ -1,27 +1,11 @@
 """
-SQL Generation Node (Phase 4).
+SQL Generation Node (Phase 4 / updated Phase 6).
 
-A LangGraph-compatible node that:
-  1. Builds a prompt from the current AgentState (question + schema).
-  2. Calls the LLM to generate a SQL SELECT statement.
-  3. Strips any markdown fences the LLM may have added.
-  4. Returns a state patch with the generated SQL (and resets error/retry_count
-     on the first attempt).
+Single-DB:  generates one SQL statement stored in state["sql"].
+Multi-DB:   generates one SQL per targeted DB, stored in state["sql_by_db"].
 
-For self-correction (Phase 5) the same node can be invoked again — it detects
-a non-None `error` in state and switches to the correction prompt automatically.
-
-Usage (standalone):
-    from src.agent.nodes.sql_generator import sql_generation_node
-    from src.agent.state import AgentState
-
-    state: AgentState = {
-        "question": "How many customers are in NYC?",
-        "schema": "...",
-        "db_targets": ["sales_db"],
-    }
-    new_state = sql_generation_node(state)
-    print(new_state["sql"])
+Self-correction: when state["error"] is set the node switches to the
+correction prompt (Phase 5 behaviour) for whichever mode is active.
 """
 from __future__ import annotations
 
@@ -34,62 +18,72 @@ from src.agent.prompts import (
 from src.agent.state import AgentState
 from src.llm.client import get_llm
 
-# Regex to strip ```sql ... ``` or plain ``` ... ``` fences
 _FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
 def _extract_sql(raw: str) -> str:
-    """Strip markdown code fences from LLM output and return clean SQL.
-
-    If no fence is found the raw text is returned stripped, so the node
-    degrades gracefully when the model follows instructions correctly.
-    """
+    """Strip markdown code fences; return plain SQL."""
     match = _FENCE_RE.search(raw)
     if match:
         return match.group(1).strip()
     return raw.strip()
 
 
-def sql_generation_node(state: AgentState) -> AgentState:
-    """LangGraph node — generate (or correct) a SQL statement.
-
-    Reads from state:
-        question    — user's natural-language question
-        schema      — schema string injected by the Schema Injector
-        db_targets  — list of DB names the query should target
-        error       — if set, switches to the correction prompt
-        sql         — previous (failed) SQL, used in correction prompt
-        retry_count — tracked externally; this node does not increment it
-
-    Writes to state:
-        sql         — newly generated SQL string
-
-    Returns:
-        Partial AgentState dict with `sql` updated.
-    """
-    llm = get_llm()
-
-    question = state.get("question", "")
-    schema = state.get("schema", "")
-    db_targets = state.get("db_targets", [])
-    error = state.get("error")
-
+def _generate_for_db(
+    llm,
+    question: str,
+    schema: str,
+    db_name: str,
+    error: str | None,
+    prev_sql: str,
+) -> str:
+    """Call the LLM once for a single target DB."""
     if error:
-        # Self-correction path (Phase 5 calls this node again after an error)
         messages = build_sql_correction_prompt(
             question=question,
             schema=schema,
-            sql=state.get("sql", ""),
+            sql=prev_sql,
             error=error,
         )
     else:
         messages = build_sql_generation_prompt(
             question=question,
             schema=schema,
-            db_targets=db_targets,
+            db_targets=[db_name],
         )
-
     response = llm.invoke(messages)
-    sql = _extract_sql(str(response.content))
+    return _extract_sql(str(response.content))
 
+
+def sql_generation_node(state: AgentState) -> AgentState:
+    """LangGraph node — generate (or correct) SQL for one or more target DBs.
+
+    Single-DB  → returns {"sql": "..."}
+    Multi-DB   → returns {"sql_by_db": {"sales_db": "...", "inventory_db": "..."}}
+    """
+    llm = get_llm()
+    question = state.get("question", "")
+    db_targets = state.get("db_targets") or ["sales_db"]
+    error = state.get("error")
+    schemas_by_db = state.get("schemas_by_db") or {}
+    schema = state.get("schema", "")
+
+    if len(db_targets) > 1:
+        # Multi-DB: one LLM call per database
+        prev_sql_by_db = state.get("sql_by_db") or {}
+        sql_by_db: dict[str, str] = {}
+        for db in db_targets:
+            db_schema = schemas_by_db.get(db, schema)
+            prev_sql = prev_sql_by_db.get(db, "")
+            sql_by_db[db] = _generate_for_db(
+                llm, question, db_schema, db, error, prev_sql
+            )
+        return {"sql_by_db": sql_by_db, "sql": ""}
+
+    # Single-DB
+    target = db_targets[0]
+    db_schema = schemas_by_db.get(target, schema)
+    sql = _generate_for_db(
+        llm, question, db_schema, target, error, state.get("sql", "")
+    )
     return {"sql": sql}

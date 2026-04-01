@@ -1,15 +1,12 @@
 """
-SQL Executor Node (Phase 5).
+SQL Executor Node (Phase 5 / updated Phase 6).
 
-A LangGraph-compatible node that:
-  1. Picks the right SQLAlchemy engine based on state["db_targets"].
-  2. Calls execute_query() (which validates + runs the SQL).
-  3. On success  → returns {"result": rows, "error": None}
-  4. On failure  → returns {"error": message, "retry_count": retry_count + 1}
-     leaving `result` untouched so the self-correction loop can inspect it.
+Single-DB:  executes state["sql"] against the first db_target.
+Multi-DB:   iterates state["sql_by_db"], executes each against its DB,
+            stores all results in state["results_by_db"].
 
-The node does NOT decide whether to retry — that logic lives in the
-conditional edge `should_retry()` in graph.py.
+On any failure the node records the error and increments retry_count so
+the self-correction loop in graph.py can route back to sql_generation_node.
 """
 from __future__ import annotations
 
@@ -23,14 +20,6 @@ _MAX_RETRIES = 3
 
 
 def _engine_for_target(db_name: str) -> Engine:
-    """Return the read-only engine for a named database.
-
-    Args:
-        db_name: "sales_db" or "inventory_db"
-
-    Raises:
-        ValueError: If db_name is not recognised.
-    """
     if db_name == "sales_db":
         return get_sales_engine(readonly=True)
     if db_name == "inventory_db":
@@ -39,29 +28,38 @@ def _engine_for_target(db_name: str) -> Engine:
 
 
 def executor_node(state: AgentState) -> AgentState:
-    """LangGraph node — execute the generated SQL against the target database.
+    """LangGraph node — execute SQL against the target database(s).
 
-    Reads from state:
-        sql         — SQL statement produced by sql_generation_node
-        db_targets  — list of DB names; uses the first entry for single-DB queries
-        retry_count — current retry depth (incremented on failure)
+    Single-DB path:
+        Reads  state["sql"] and state["db_targets"][0].
+        Writes state["result"] and state["error"].
 
-    Writes to state (success):
-        result      — list of row dicts
-        error       — None
+    Multi-DB path:
+        Reads  state["sql_by_db"].
+        Writes state["results_by_db"] and state["error"].
 
-    Writes to state (failure):
-        error       — exception message string
-        retry_count — incremented by 1
-
-    Returns:
-        Partial AgentState dict.
+    On failure, increments state["retry_count"] and sets state["error"].
     """
+    retry_count = state.get("retry_count") or 0
+    sql_by_db = state.get("sql_by_db")
+
+    if sql_by_db:
+        # ── Multi-DB execution ────────────────────────────────────────────
+        results_by_db: dict = {}
+        for db_name, sql in sql_by_db.items():
+            try:
+                engine = _engine_for_target(db_name)
+                results_by_db[db_name] = execute_query(engine, sql)
+            except Exception as exc:
+                return {
+                    "error": f"[{db_name}] {exc}",
+                    "retry_count": retry_count + 1,
+                }
+        return {"results_by_db": results_by_db, "error": None}
+
+    # ── Single-DB execution ───────────────────────────────────────────────
     sql = state.get("sql", "")
     db_targets = state.get("db_targets") or ["sales_db"]
-    retry_count = state.get("retry_count") or 0
-
-    # Phase 5: single-DB execution (cross-DB merge comes in Phase 6)
     target = db_targets[0]
 
     try:
@@ -78,12 +76,7 @@ def executor_node(state: AgentState) -> AgentState:
 # ── Conditional edge ──────────────────────────────────────────────────────────
 
 def should_retry(state: AgentState) -> str:
-    """LangGraph conditional edge function.
-
-    Returns:
-        "retry" — if there is an error and retries remain
-        "done"  — if the query succeeded or retry limit is reached
-    """
+    """Return 'retry' if there is an error and retries remain, else 'done'."""
     if state.get("error") and (state.get("retry_count") or 0) < _MAX_RETRIES:
         return "retry"
     return "done"

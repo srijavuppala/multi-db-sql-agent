@@ -8,8 +8,11 @@ Templates
 ---------
 build_sql_generation_prompt  — first-attempt SQL generation
 build_sql_correction_prompt  — self-correction after an execution error
+build_synthesis_prompt       — natural-language answer from query results
 """
 from __future__ import annotations
+import json
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -80,5 +83,44 @@ def build_sql_correction_prompt(
     )
     return [
         SystemMessage(content=_SQL_SYSTEM),
+        HumanMessage(content=human_text),
+    ]
+
+
+_SYNTHESIS_SYSTEM = (
+    "You are a helpful data analyst. "
+    "Given a user question and database query results, write a clear and concise answer. "
+    "Be specific — include numbers, names, and values from the data. "
+    "Do not show SQL or raw JSON in your answer."
+)
+
+
+def build_synthesis_prompt(
+    question: str,
+    results: dict,
+    sql: str,
+) -> list:
+    """Return a LangChain message list for the synthesis node.
+
+    Args:
+        question: Original user question.
+        results:  Dict of db_name -> list of row dicts (single-DB uses key "result").
+        sql:      The SQL that was executed (for context).
+
+    Returns:
+        [SystemMessage, HumanMessage] ready to pass to llm.invoke().
+    """
+    results_text = json.dumps(results, indent=2, default=str)
+    if len(results_text) > 4000:
+        results_text = results_text[:4000] + "\n... (truncated)"
+
+    human_text = (
+        f"Question: {question}\n\n"
+        f"SQL executed:\n{sql}\n\n"
+        f"Query results:\n{results_text}\n\n"
+        "Please answer the question based on these results."
+    )
+    return [
+        SystemMessage(content=_SYNTHESIS_SYSTEM),
         HumanMessage(content=human_text),
     ]
