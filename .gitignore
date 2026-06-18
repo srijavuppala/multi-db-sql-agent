@@ -17,3 +17,7 @@ db/*.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
