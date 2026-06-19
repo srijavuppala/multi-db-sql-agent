@@ -1,5 +1,7 @@
 # Multi-DB SQL Agent
 
+> 🚧 **Active development — Phase 3 (LLM + agent layer) in progress.** The data layer (Phases 1–2: dual-database schema, read-only security, seed data, full test coverage) is complete and tested. The LangGraph agent, FastAPI backend, and React UI described below are the in-flight roadmap. See [Project Status](#project-status) for the current breakdown.
+
 An agentic text-to-SQL system that lets you ask natural language questions across multiple databases and get correct, sourced SQL answers. Built with LangGraph, FastAPI, and React.
 
 ## What it does
@@ -60,14 +62,14 @@ Both share `PRODUCT_IDS` (101–110) as the cross-DB join key.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Postgres Sales DB | Complete |
-| 2 | SQLite Inventory DB | Complete |
-| 3 | LLM Abstraction & DB Tools | Pending |
-| 4 | SQL Generation Node | Pending |
-| 5 | Self-Correction Loop | Pending |
-| 6 | Routing, Cross-DB & Memory | Pending |
-| 7 | FastAPI Backend | Pending |
-| 8 | React Frontend | Pending |
+| 1 | Postgres Sales DB | ✅ Complete |
+| 2 | SQLite Inventory DB | ✅ Complete |
+| 3 | LLM Abstraction & DB Tools | 🔨 In progress |
+| 4 | SQL Generation Node | ⏳ Planned |
+| 5 | Self-Correction Loop | ⏳ Planned |
+| 6 | Routing, Cross-DB & Memory | ⏳ Planned |
+| 7 | FastAPI Backend | ⏳ Planned |
+| 8 | React Frontend | ⏳ Planned |
 
 ## Getting Started
 
